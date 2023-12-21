@@ -1,0 +1,24 @@
+* {
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100lvh;
+  display: grid;
+  place-items: center;
+}
+
+@keyframes bounce {
+  0% {
+    transform: translateY(-3px);
+  }
+  100% {
+    transform: translateY(3px);
+  }
+}
+
+canvas {
+  animation: bounce 1.7s alternate 0s infinite ease-in-out;
+}
