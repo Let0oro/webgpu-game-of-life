@@ -1,6 +1,6 @@
 import './style.css'
 
-const GRID_SIZE = 4; // tamaño de cuadrícula
+const GRID_SIZE = 32; // tamaño de cuadrícula
 const canvas = document.querySelector("canvas");
 
 // Asegúrate de que se puede acceder a WebGPU
@@ -67,20 +67,58 @@ const cellShaderModule = device.createShaderModule({
   label: "Cell shader",
   code: `
   // Your shader code will go here
+  // WITH STRUCTS -> tipos de objetos que poseen una o más propiedades que se pueden marcar con atributos @builtin y @location
+  //             \-> Similar a TS
+  struct VertexInput {
+    @location(0) pos: vec2f,
+    @builtin(instance_index) instance: u32,
+  };
+  
+  struct VertexOutput {
+    @builtin(position) pos: vec4f,
+    @location(0) cell: vec2f,
+  };
+  
+  @group(0) @binding(0) var<uniform> grid: vec2f;
+  @group(0) @binding(1) var<storage> cellState: array<u32>; // Leer buffer de almacenamiento
 
+  @vertex
+  fn vertexMain(@location(0) pos: vec2f,
+                @builtin(instance_index) instance: u32) -> VertexOutput  {
+    let i = f32(instance);
+    let cell = vec2f(i % grid.x, floor(i / grid.x));
+    let state = f32(cellState[instance]);
+    let cellOffset = cell / grid * 2;
+    let gridPos = (pos * state + 1) / grid - 1 + cellOffset;
+    
+    var output: VertexOutput;
+    output.pos = vec4f(gridPos, 0, 1);
+    output.cell = cell;
+    return output;
+  }
 
+  // ***************************************
+  // WITHOUT STRUCTS: 
   // Accede a los uniformes en un sombreador
   // At the top of the 'code' string in the createShaderModule() call
-  @group(0) @binding(0) var<uniform> grid: vec2f;
+/* @group(0) @binding(0) var<uniform> grid: vec2f;
   
   @vertex
-  fn vertexMain(@location(0) pos: vec2f) ->
+  fn vertexMain(@location(0) pos: vec2f,
+                @builtin(instance_index) instance: u32 // numero de instancias de vértices (para renderizar grupo de cuadrados)
+                ) -> 
     @builtin(position) vec4f {
-    return vec4f(pos / grid, 0, 1);
+      
+      let i = f32(instance); // Guardar el indice de instancia como float de 32 bits
+      let cell = vec2f( i % grid.x, floor(i / grid.x) );
+      let cellOffset = cell / grid * 2; // compute the offset to cell
+      let gridPos = (pos + 1) / grid - 1 + cellOffset;
+    return vec4f(gridPos, 0, 1);
   }
   
   // ...fragmentMain is unchanged 
-
+*/
+// *****************************************
 // -------------------------------------------------------
   
   // Define el sombreador de vértices, que será llamado por la GPU por cada vértice del VertexBuffer
@@ -103,8 +141,10 @@ fn vertexMain( @location(0) pos: vec2f )
   // Siempre se llaman después de estos
   // También devuelve un vector 4D, pero este define el color, no la posición
 @fragment
-fn fragmentMain() -> @location(0) vec4f {
-  return vec4f(1, 0, 0, 1); // (Red, Green, Blue, Alpha)
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+  // (Red = cell.x, Green = cell.y, Blue = 0, Alpha = 1)
+  let c = input.cell/grid;
+  return vec4f(c, 1 - c.x, 1); // (Red, Green, Blue, Alpha)
 }
   `
 });
@@ -150,6 +190,24 @@ const bindGroup = device.createBindGroup({
 }); // has creado un GPUBindGroup, inmutable y opaco, pero se pueden cambiar los contenidos de los recursos
 
 
+// Crea un buffer de almacenamiento (trato más secundario frente al uniforme, por tanto, para cálculos más lentos)
+// Create an array representing the active state of each cell.
+const cellStateArray = new Uint32Array(GRID_SIZE * GRID_SIZE);
+
+// Create a storage buffer to hold the cell state.
+const cellStateStorage = device.createBuffer({
+  label: "Cell State",
+  size: cellStateArray.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+});
+
+// Mark every third cell of the grid as active.
+for (let i = 0; i < cellStateArray.length; i += 3) {
+  cellStateArray[i] = 1;
+}
+device.queue.writeBuffer(cellStateStorage, 0, cellStateArray);
+
+
 
 
 
@@ -182,8 +240,7 @@ pass.setVertexBuffer(0, vertexBuffer);
 
 pass.setBindGroup(0, bindGroup); // New line!
 
-pass.draw(vertices.length / 2);
-
+pass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE);
 
 
 pass.end();
